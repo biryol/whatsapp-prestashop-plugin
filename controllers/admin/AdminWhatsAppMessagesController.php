@@ -14,6 +14,7 @@ class AdminWhatsAppMessagesController extends ModuleAdminController
     const STATUS_FAILED = 3;
     const TYPE_ORDER = 1;
     const TYPE_CART = 2;
+    const TYPE_TRENDYOL = 3;
 
     public $filters = [
         [
@@ -102,6 +103,9 @@ class AdminWhatsAppMessagesController extends ModuleAdminController
                     break;
                 case self::TYPE_CART:
                     $message["type"] = $this->l('Abandoned Cart');
+                    break;
+                case self::TYPE_TRENDYOL:
+                    $message["type"] = $this->l('Trendyol Sync');
                     break;
             }
 
