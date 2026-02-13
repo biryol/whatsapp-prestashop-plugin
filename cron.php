@@ -20,4 +20,5 @@ if (Tools::substr(Tools::encrypt('tochatwhatsapp/cron'), 0, 10) != Tools::getVal
 $tochat_whatsapp = new Tochatwhatsapp();
 $tochat_whatsapp->abandonedCart();
 $tochat_whatsapp->automateMessage();
+$tochat_whatsapp->syncTrendyolOrders();
 echo "DONE";

@@ -13,6 +13,7 @@ if (!defined('_CAN_LOAD_FILES_')) {
     exit;
 }
 require_once dirname(__FILE__) . '/src/Api.php';
+require_once dirname(__FILE__) . '/src/TrendyolApi.php';
 
 class Tochatwhatsapp extends Module
 {
@@ -26,6 +27,7 @@ class Tochatwhatsapp extends Module
     const MESSAGE_STATUS_FAILED = 3;
 
     const MESSAGE_TYPE_CART = 2;
+    const MESSAGE_TYPE_TRENDYOL = 3;
 
     private $config = [
         'TOCHATWHATSAPP_GENERAL_STATUS',
@@ -41,6 +43,12 @@ class Tochatwhatsapp extends Module
         'TOCHATWHATSAPP_ABANDONED_TEMPLATE',
         'TOCHATWHATSAPP_WIDGET_STATUS',
         'TOCHATWHATSAPP_WIDGET_SNIPPET',
+        'TOCHATWHATSAPP_TRENDYOL_STATUS',
+        'TOCHATWHATSAPP_TRENDYOL_SUPPLIER_ID',
+        'TOCHATWHATSAPP_TRENDYOL_API_KEY',
+        'TOCHATWHATSAPP_TRENDYOL_API_SECRET',
+        'TOCHATWHATSAPP_TRENDYOL_BASE_URL',
+        'TOCHATWHATSAPP_TRENDYOL_LAST_SYNC',
     ];
 
     protected $html = '';
@@ -89,6 +97,7 @@ class Tochatwhatsapp extends Module
 
         //Set Default Config Values
         Configuration::updateValue('TOCHATWHATSAPP_AUTOMATION_ENDPOINT', $this->endpoint);
+        Configuration::updateValue('TOCHATWHATSAPP_TRENDYOL_BASE_URL', TrendyolApi::DEFAULT_BASE_URL);
 
         // Alter customer table
         try {
@@ -233,6 +242,22 @@ class Tochatwhatsapp extends Module
                 );
             }
         }
+
+        if (Tools::isSubmit('tochatwhatsapp_trendyol')
+            && Tools::getValue('TOCHATWHATSAPP_TRENDYOL_STATUS') == 1) {
+            if (!Tools::getValue('TOCHATWHATSAPP_TRENDYOL_SUPPLIER_ID')) {
+                $this->postErrors[] = $this->trans('Trendyol Supplier ID is required.', array(), 'Modules.TochatWhatsapp.Admin');
+            }
+            if (!Tools::getValue('TOCHATWHATSAPP_TRENDYOL_API_KEY')) {
+                $this->postErrors[] = $this->trans('Trendyol API Key is required.', array(), 'Modules.TochatWhatsapp.Admin');
+            }
+            if (!Tools::getValue('TOCHATWHATSAPP_TRENDYOL_API_SECRET')) {
+                $this->postErrors[] = $this->trans('Trendyol API Secret is required.', array(), 'Modules.TochatWhatsapp.Admin');
+            }
+            if (!Tools::getValue('TOCHATWHATSAPP_TRENDYOL_BASE_URL')) {
+                $this->postErrors[] = $this->trans('Trendyol API URL is required.', array(), 'Modules.TochatWhatsapp.Admin');
+            }
+        }
     }
 
     protected function postProcess()
@@ -300,6 +325,19 @@ class Tochatwhatsapp extends Module
                 Tools::getValue('TOCHATWHATSAPP_WIDGET_SNIPPET'),
                 true
             );
+        }
+
+        if (Tools::isSubmit('tochatwhatsapp_trendyol')) {
+            Configuration::updateValue('TOCHATWHATSAPP_TRENDYOL_STATUS', Tools::getValue('TOCHATWHATSAPP_TRENDYOL_STATUS'));
+            Configuration::updateValue('TOCHATWHATSAPP_TRENDYOL_SUPPLIER_ID', Tools::getValue('TOCHATWHATSAPP_TRENDYOL_SUPPLIER_ID'));
+            Configuration::updateValue('TOCHATWHATSAPP_TRENDYOL_API_KEY', Tools::getValue('TOCHATWHATSAPP_TRENDYOL_API_KEY'));
+            Configuration::updateValue('TOCHATWHATSAPP_TRENDYOL_API_SECRET', Tools::getValue('TOCHATWHATSAPP_TRENDYOL_API_SECRET'));
+            Configuration::updateValue('TOCHATWHATSAPP_TRENDYOL_BASE_URL', Tools::getValue('TOCHATWHATSAPP_TRENDYOL_BASE_URL'));
+        }
+
+        if (Tools::isSubmit('tochatwhatsapp_trendyol_sync')) {
+            $count = $this->syncTrendyolOrders();
+            $this->html .= $this->displayConfirmation(sprintf($this->trans('Trendyol synchronization completed. %d orders processed.', array(), 'Modules.TochatWhatsapp.Admin'), $count));
         }
 
         $this->html .= $this->displayConfirmation($this->trans('Settings updated', array(), 'Admin.Global'));
@@ -627,7 +665,46 @@ class Tochatwhatsapp extends Module
             $helper->fields_value[$config] = Tools::getValue($config, Configuration::get($config));
         }
 
-        return $helper->generateForm([$general, $automation, $abandoned, $widget]);
+        $trendyol = array(
+            'form' => array(
+                'legend' => array(
+                    'title' => $this->trans('Trendyol API Integration', array(), 'Modules.TochatWhatsapp.Admin'),
+                    'icon' => 'icon-exchange',
+                ),
+                'description' => $this->trans('Fetches Trendyol orders and writes sync logs to module message table.', array(), 'Modules.TochatWhatsapp.Admin'),
+                'input' => array(
+                    array(
+                        'type' => 'switch',
+                        'label' => $this->trans('Enable/Disable', array(), 'Modules.TochatWhatsapp.Admin'),
+                        'name' => 'TOCHATWHATSAPP_TRENDYOL_STATUS',
+                        'required' => true,
+                        'values' => array(
+                            array('id' => 'trendyol_active_on', 'value' => true, 'label' => $this->trans('Enabled', array(), 'Admin.Global')),
+                            array('id' => 'trendyol_active_off', 'value' => false, 'label' => $this->trans('Disabled', array(), 'Admin.Global')),
+                        ),
+                    ),
+                    array('type' => 'text', 'label' => $this->trans('Supplier ID', array(), 'Modules.TochatWhatsapp.Admin'), 'name' => 'TOCHATWHATSAPP_TRENDYOL_SUPPLIER_ID', 'required' => true),
+                    array('type' => 'text', 'label' => $this->trans('API Key', array(), 'Modules.TochatWhatsapp.Admin'), 'name' => 'TOCHATWHATSAPP_TRENDYOL_API_KEY', 'required' => true),
+                    array('type' => 'password', 'label' => $this->trans('API Secret', array(), 'Modules.TochatWhatsapp.Admin'), 'name' => 'TOCHATWHATSAPP_TRENDYOL_API_SECRET', 'required' => true),
+                    array('type' => 'text', 'label' => $this->trans('Base URL', array(), 'Modules.TochatWhatsapp.Admin'), 'name' => 'TOCHATWHATSAPP_TRENDYOL_BASE_URL', 'required' => true),
+                ),
+                'submit' => array(
+                    'title' => $this->trans('Save', array(), 'Admin.Actions'),
+                    'name' => 'tochatwhatsapp_trendyol',
+                ),
+                'buttons' => array(
+                    'sync' => array(
+                        'title' => $this->trans('Sync Trendyol Orders', array(), 'Modules.TochatWhatsapp.Admin'),
+                        'name' => 'tochatwhatsapp_trendyol_sync',
+                        'type' => 'submit',
+                        'class' => 'btn btn-default pull-right',
+                        'icon' => 'process-icon-refresh',
+                    ),
+                ),
+            ),
+        );
+
+        return $helper->generateForm([$general, $automation, $abandoned, $widget, $trendyol]);
     }
 
     public function hookDisplayAdminOrderSideBottom($params)
@@ -1014,4 +1091,59 @@ class Tochatwhatsapp extends Module
             }
         }
     }
+
+    public function syncTrendyolOrders()
+    {
+        if (!(bool) Configuration::get('TOCHATWHATSAPP_TRENDYOL_STATUS')) {
+            return 0;
+        }
+
+        $api = new TrendyolApi(
+            Configuration::get('TOCHATWHATSAPP_TRENDYOL_SUPPLIER_ID'),
+            Configuration::get('TOCHATWHATSAPP_TRENDYOL_API_KEY'),
+            Configuration::get('TOCHATWHATSAPP_TRENDYOL_API_SECRET'),
+            Configuration::get('TOCHATWHATSAPP_TRENDYOL_BASE_URL', TrendyolApi::DEFAULT_BASE_URL)
+        );
+
+        $response = $api->getOrders([
+            'size' => 25,
+            'page' => 0,
+            'orderByField' => 'PackageLastModifiedDate',
+            'orderByDirection' => 'DESC',
+        ]);
+
+        if (!$response['success']) {
+            Db::getInstance()->insert('tochat_whatsapp_message', [
+                'type' => self::MESSAGE_TYPE_TRENDYOL,
+                'status' => self::MESSAGE_STATUS_FAILED,
+                'log' => pSQL($response['message'], true),
+                'extradata' => pSQL(json_encode(['source' => 'trendyol']), true),
+                'sent_on' => date('Y-m-d H:i:s'),
+            ]);
+
+            return 0;
+        }
+
+        $orders = isset($response['data']['content']) ? $response['data']['content'] : [];
+
+        foreach ($orders as $order) {
+            $orderNumber = isset($order['orderNumber']) ? $order['orderNumber'] : 'N/A';
+
+            Db::getInstance()->insert('tochat_whatsapp_message', [
+                'type' => self::MESSAGE_TYPE_TRENDYOL,
+                'status' => self::MESSAGE_STATUS_SENT,
+                'message' => pSQL('Trendyol order synced: #' . $orderNumber, true),
+                'extradata' => pSQL(json_encode([
+                    'source' => 'trendyol',
+                    'orderNumber' => $orderNumber,
+                ]), true),
+                'sent_on' => date('Y-m-d H:i:s'),
+            ]);
+        }
+
+        Configuration::updateValue('TOCHATWHATSAPP_TRENDYOL_LAST_SYNC', date('Y-m-d H:i:s'));
+
+        return count($orders);
+    }
+
 }
